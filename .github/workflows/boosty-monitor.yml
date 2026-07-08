@@ -1,0 +1,72 @@
+name: Boosty Monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: 📦 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: 🔓 Decode main.py from secret
+        env:
+          MAIN_PY_B64: ${{ secrets.MAIN_PY_B64 }}
+        run: |
+          # Декодируем base64 в main.py
+          echo "$MAIN_PY_B64" | base64 -d > main.py
+          
+          # Проверяем что файл создался
+          if [ ! -f main.py ]; then
+            echo "❌ main.py не создан!"
+            exit 1
+          fi
+          
+          # Проверяем размер (должен быть больше 100 байт)
+          SIZE=$(stat -c%s main.py 2>/dev/null || stat -f%z main.py 2>/dev/null)
+          if [ "$SIZE" -lt 100 ]; then
+            echo "❌ main.py слишком маленький ($SIZE байт)! Ошибка декодирования!"
+            exit 1
+          fi
+          
+          echo "✅ main.py успешно создан (размер: $SIZE байт)"
+          chmod +x main.py
+          
+      - name: 🚀 Run monitor
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          AUTH_JSON: ${{ secrets.AUTH_JSON }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python main.py
+          
+      - name: 💾 Save state
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add last_post_id.json 2>/dev/null || true
+          if ! git diff --staged --quiet; then
+            git commit -m "Update post state [skip ci]"
+            git push
+            echo "✅ State pushed successfully"
+          else
+            echo "📭 No changes to commit"
+          fi
